@@ -204,10 +204,17 @@ class TelegramShopBot:
             self.clear_state(context)
             await self.send_main_menu(update.message, context, user_id, "Действие отменено.")
             return
-
+        
         # stateful flows first
         if state == "checkout_phone":
             draft["phone"] = text
+            context.user_data["draft"] = draft
+            self.set_state(context, "checkout_name", **draft)
+            await update.message.reply_text("Как к вам можно обращаться?", reply_markup=self.cancel_keyboard())
+            return
+
+        if state == "checkout_name":
+            draft["name"] = text
             context.user_data["draft"] = draft
             self.set_state(context, "checkout_address", **draft)
             await update.message.reply_text("Введите адрес доставки:", reply_markup=self.cancel_keyboard())
@@ -227,9 +234,16 @@ class TelegramShopBot:
             items = self.catalog.get_order_items(order_id)
             self.clear_state(context)
             await self.send_main_menu(update.message, context, user_id, f"✅ Заказ #{order_id} оформлен.")
+
+            admin_text = self.format_order_text(order, items)
+            admin_text = admin_text.replace(
+                f"Клиент: {order['user_id']}",
+                f"Клиент: {draft.get('name', 'Не указано')} (ID: {order['user_id']})"
+            )
+
             await context.bot.send_message(
                 chat_id=self.admin_id,
-                text=self.format_order_text(order, items),
+                text=admin_text,
                 parse_mode="HTML",
                 reply_markup=self.order_keyboard(order_id),
             )
@@ -640,13 +654,19 @@ class TelegramShopBot:
         state = context.user_data.get("state")
         if state != "checkout_phone":
             return
+
         contact = update.message.contact
         if not contact:
             return
+
         draft = context.user_data.get("draft", {})
         draft["phone"] = contact.phone_number
-        self.set_state(context, "checkout_address", **draft)
-        await update.message.reply_text("Введите адрес доставки:", reply_markup=self.cancel_keyboard())
+
+        self.set_state(context, "checkout_name", **draft)
+        await update.message.reply_text(
+            "Как к вам можно обращаться?",
+            reply_markup=self.cancel_keyboard()
+        )
 
     async def show_orders(self, target, context: ContextTypes.DEFAULT_TYPE):
         orders = self.catalog.list_orders()
