@@ -188,14 +188,6 @@ class TelegramShopBot:
         )
 
     def format_product_compact(self, product) -> str:
-        description = (product["description"] or "").strip()
-        if description:
-            short_description = description[:100] + ("..." if len(description) > 100 else "")
-            return (
-                f"<b>{product['name']}</b>\n"
-                f"Цена: {product['price']:.2f}\n\n"
-                f"{short_description}"
-            )
         return (
             f"<b>{product['name']}</b>\n"
             f"Цена: {product['price']:.2f}"
@@ -203,10 +195,8 @@ class TelegramShopBot:
 
     def product_compact_keyboard(self, product) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("Подробнее", callback_data=f"prodfull:{product['id']}"),
-                InlineKeyboardButton("🛒 В корзину", callback_data=f"prodadd:{product['id']}"),
-            ],
+            [InlineKeyboardButton("🛒 В корзину", callback_data=f"prodadd:{product['id']}")],
+            [InlineKeyboardButton("Подробнее", callback_data=f"prodfull:{product['id']}")],
             [InlineKeyboardButton("⬅️ Назад", callback_data=f"cat:{product['category_id']}")],
         ])
 
