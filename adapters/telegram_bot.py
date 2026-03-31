@@ -250,6 +250,7 @@ class TelegramShopBot:
                     else:
                         raise
             else:
+                await query.message.delete()
                 await send_photo()
             return
 
