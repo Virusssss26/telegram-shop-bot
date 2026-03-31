@@ -326,8 +326,10 @@ class TelegramShopBot:
     ):
         try:
             if getattr(query.message, "photo", None):
-                await query.edit_message_caption(
-                    caption=text,
+                await query.message.delete()
+                await query.message.get_bot().send_message(
+                    chat_id=query.message.chat.id,
+                    text=text,
                     parse_mode=parse_mode,
                     reply_markup=reply_markup,
                 )
