@@ -4,6 +4,8 @@ from typing import Optional
 
 from db import Database
 
+FINAL_ORDER_STATUSES = ("done", "cancelled")
+
 
 class CatalogService:
     def __init__(self, db: Database):
@@ -189,7 +191,24 @@ class CatalogService:
         return float(row["total"]) if row else 0.0
 
     # orders
-    def create_order(self, user_id: int, phone: str, address: str, comment: str) -> int:
+    def is_final_order_status(self, status: str) -> bool:
+        return status in FINAL_ORDER_STATUSES
+
+    def list_active_orders(self):
+        placeholders = ", ".join("?" for _ in FINAL_ORDER_STATUSES)
+        return self.db.fetchall(
+            f"SELECT * FROM orders WHERE status NOT IN ({placeholders}) ORDER BY id DESC",
+            FINAL_ORDER_STATUSES,
+        )
+
+    def list_archived_orders(self):
+        placeholders = ", ".join("?" for _ in FINAL_ORDER_STATUSES)
+        return self.db.fetchall(
+            f"SELECT * FROM orders WHERE status IN ({placeholders}) ORDER BY id DESC",
+            FINAL_ORDER_STATUSES,
+        )
+
+    def create_order(self, user_id: int, customer_name: str, phone: str, address: str, comment: str) -> int:
         def create(conn):
             items = conn.execute(
                 """
@@ -217,10 +236,17 @@ class CatalogService:
 
             cur = conn.execute(
                 """
-                INSERT INTO orders (user_id, phone, address, comment, total)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO orders (user_id, customer_name, phone, address, comment, total)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (user_id, phone.strip(), address.strip(), comment.strip(), total),
+                (
+                    user_id,
+                    customer_name.strip(),
+                    phone.strip(),
+                    address.strip(),
+                    comment.strip(),
+                    total,
+                ),
             )
             order_id = cur.lastrowid
 

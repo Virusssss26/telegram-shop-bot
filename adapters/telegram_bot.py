@@ -42,7 +42,8 @@ class TelegramShopBot:
             keyboard = [
                 ["🛍 Каталог", "🛒 Корзина"],
                 ["📂 Категории", "📦 Товары"],
-                ["📬 Заказы", "ℹ️ Контакты"],
+                ["📬 Заказы", "🗃 Архив заказов"],
+                ["ℹ️ Контакты"],
             ]
         else:
             keyboard = [
@@ -118,8 +119,13 @@ class TelegramShopBot:
             [InlineKeyboardButton("⬅️ Назад к категориям", callback_data="admcat:list")],
         ])
 
-    def order_keyboard(self, order_id: int) -> InlineKeyboardMarkup:
-        return InlineKeyboardMarkup([
+    def order_keyboard(self, order_id: int, archived: bool = False) -> InlineKeyboardMarkup:
+        rows = []
+        if archived:
+            rows.append([InlineKeyboardButton("⬅️ К архиву заказов", callback_data="orders:archive")])
+            return InlineKeyboardMarkup(rows)
+
+        rows.extend([
             [
                 InlineKeyboardButton("✅ Подтвердить", callback_data=f"order:confirmed:{order_id}"),
                 InlineKeyboardButton("📦 Завершить", callback_data=f"order:done:{order_id}"),
@@ -127,6 +133,7 @@ class TelegramShopBot:
             [InlineKeyboardButton("❌ Отменить", callback_data=f"order:cancelled:{order_id}")],
             [InlineKeyboardButton("⬅️ К заказам", callback_data="orders:list")],
         ])
+        return InlineKeyboardMarkup(rows)
 
     # ---------- formatting ----------
     def format_product_card(self, product) -> str:
@@ -159,7 +166,7 @@ class TelegramShopBot:
         lines = [
             f"<b>Заказ #{order['id']}</b>",
             f"Статус: {ORDER_STATUS_LABELS.get(order['status'], order['status'])}",
-            f"Клиент: {order['user_id']}",
+            f"Клиент: {order['customer_name'] or 'Не указано'} (ID: {order['user_id']})",
             f"Телефон: {order['phone']}",
             f"Адрес: {order['address']}",
             f"Комментарий: {order['comment'] or '—'}",
@@ -264,21 +271,21 @@ class TelegramShopBot:
 
         if state == "checkout_comment":
             comment = "" if text.lower() == "нет" else text
-            order_id = self.catalog.create_order(user_id, draft["phone"], draft["address"], comment)
+            order_id = self.catalog.create_order(
+                user_id,
+                draft["name"],
+                draft["phone"],
+                draft["address"],
+                comment,
+            )
             order = self.catalog.get_order(order_id)
             items = self.catalog.get_order_items(order_id)
             self.clear_state(context)
             await self.send_main_menu(update.message, context, user_id, f"✅ Заказ #{order_id} оформлен.")
 
-            admin_text = self.format_order_text(order, items)
-            admin_text = admin_text.replace(
-                f"Клиент: {order['user_id']}",
-                f"Клиент: {draft.get('name', 'Не указано')} (ID: {order['user_id']})"
-            )
-
             await context.bot.send_message(
                 chat_id=self.admin_id,
-                text=admin_text,
+                text=self.format_order_text(order, items),
                 parse_mode="HTML",
                 reply_markup=self.order_keyboard(order_id),
             )
@@ -390,7 +397,11 @@ class TelegramShopBot:
             return
 
         if text == "📬 Заказы":
-            await self.show_orders(update.message, context)
+            await self.show_orders(update.message, context, archived=False)
+            return
+
+        if text == "🗃 Архив заказов":
+            await self.show_orders(update.message, context, archived=True)
             return
 
         await update.message.reply_text("Используйте кнопки меню ниже.", reply_markup=self.main_keyboard(user_id))
@@ -665,7 +676,11 @@ class TelegramShopBot:
             return
 
         if query.data == "orders:list":
-            await self.show_orders(query.message, context)
+            await self.show_orders(query.message, context, archived=False)
+            return
+
+        if query.data == "orders:archive":
+            await self.show_orders(query.message, context, archived=True)
             return
 
         if query.data.startswith("order:"):
@@ -673,10 +688,11 @@ class TelegramShopBot:
             self.catalog.update_order_status(int(order_id), status)
             order = self.catalog.get_order(int(order_id))
             items = self.catalog.get_order_items(int(order_id))
+            archived = self.catalog.is_final_order_status(order["status"])
             await query.message.reply_text(
                 self.format_order_text(order, items),
                 parse_mode="HTML",
-                reply_markup=self.order_keyboard(int(order_id)),
+                reply_markup=self.order_keyboard(int(order_id), archived=archived),
             )
             return
 
@@ -710,17 +726,24 @@ class TelegramShopBot:
             reply_markup=self.cancel_keyboard()
         )
 
-    async def show_orders(self, target, context: ContextTypes.DEFAULT_TYPE):
-        orders = self.catalog.list_orders()
+    async def show_orders(self, target, context: ContextTypes.DEFAULT_TYPE, archived: bool = False):
+        orders = self.catalog.list_archived_orders() if archived else self.catalog.list_active_orders()
         if not orders:
-            await target.reply_text("Заказов пока нет.", reply_markup=self.main_keyboard(self.admin_id))
+            empty_text = "Архив заказов пока пуст." if archived else "Активных заказов пока нет."
+            await target.reply_text(empty_text, reply_markup=self.main_keyboard(self.admin_id))
             return
+
+        title = "Архив заказов:" if archived else "Активные заказы:"
+        await target.reply_text(title)
         for order in orders[:20]:
             items = self.catalog.get_order_items(int(order["id"]))
             await target.reply_text(
                 self.format_order_text(order, items),
                 parse_mode="HTML",
-                reply_markup=self.order_keyboard(int(order["id"])),
+                reply_markup=self.order_keyboard(
+                    int(order["id"]),
+                    archived=self.catalog.is_final_order_status(order["status"]),
+                ),
             )
 
     def build_app(self) -> Application:

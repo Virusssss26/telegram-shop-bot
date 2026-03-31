@@ -58,6 +58,7 @@ class Database:
                 CREATE TABLE IF NOT EXISTS orders (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL,
+                    customer_name TEXT NOT NULL DEFAULT '',
                     phone TEXT NOT NULL,
                     address TEXT NOT NULL,
                     comment TEXT NOT NULL DEFAULT '',
@@ -91,6 +92,14 @@ class Database:
             cur.execute(
                 "INSERT OR IGNORE INTO settings (key, value) VALUES ('contacts_text', 'Контакты пока не заполнены.')"
             )
+            order_columns = {
+                row["name"]
+                for row in cur.execute("PRAGMA table_info(orders)").fetchall()
+            }
+            if "customer_name" not in order_columns:
+                cur.execute(
+                    "ALTER TABLE orders ADD COLUMN customer_name TEXT NOT NULL DEFAULT ''"
+                )
             conn.commit()
 
     def fetchall(self, query: str, params: Iterable[Any] = ()):
