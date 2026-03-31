@@ -8,7 +8,7 @@ from services.catalog import CatalogService
 def main() -> None:
     token = os.getenv("TELEGRAM_TOKEN", "").strip()
     admin_id_raw = os.getenv("ADMIN_ID", "").strip()
-    db_path = os.getenv("DB_PATH", "shop.db").strip()
+    db_path = os.getenv("DB_PATH", "shop_dev.db").strip()
 
     if not token:
         raise RuntimeError("TELEGRAM_TOKEN not found in Railway Variables")

@@ -16,7 +16,7 @@ This template is a beginner-friendly Telegram shop bot with:
 - `requirements.txt` — Python dependency list
 - `.env.example` — environment variables example
 - `.gitignore` — local files and secrets excluded from git
-- `shop.db` — local SQLite database file created/used by the bot
+- `shop_dev.db` — local SQLite dev database file created/used by the bot
 
 ## Quick start
 1. Create a Telegram bot in BotFather and get the token.
@@ -34,7 +34,7 @@ This template is a beginner-friendly Telegram shop bot with:
 ## Environment variables
 - `TELEGRAM_TOKEN` — Telegram bot token from BotFather
 - `ADMIN_ID` — numeric Telegram user ID of the administrator
-- `DB_PATH` — path to SQLite database file, defaults to `shop.db`
+- `DB_PATH` — path to SQLite database file, defaults to `shop_dev.db`
 
 ## Important note
 Telegram does not allow a bot to message a user before that user opens the chat and presses Start. So the first `/start` (or Start button in the Telegram UI) is still required once. After that, the bot works with buttons.

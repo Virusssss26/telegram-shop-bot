@@ -4,4 +4,5 @@ __pycache__/
 *.py[cod]
 *.sqlite3
 *.db
+!shop_dev.db
 .DS_Store
