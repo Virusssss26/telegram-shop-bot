@@ -187,14 +187,78 @@ class TelegramShopBot:
             f"{product['description']}"
         )
 
+    def format_product_compact(self, product) -> str:
+        description = (product["description"] or "").strip()
+        if description:
+            short_description = description[:100] + ("..." if len(description) > 100 else "")
+            return (
+                f"<b>{product['name']}</b>\n"
+                f"Цена: {product['price']:.2f}\n\n"
+                f"{short_description}"
+            )
+        return (
+            f"<b>{product['name']}</b>\n"
+            f"Цена: {product['price']:.2f}"
+        )
+
+    def product_compact_keyboard(self, product) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("Подробнее", callback_data=f"prodfull:{product['id']}"),
+                InlineKeyboardButton("🛒 В корзину", callback_data=f"prodadd:{product['id']}"),
+            ],
+            [InlineKeyboardButton("⬅️ Назад", callback_data=f"cat:{product['category_id']}")],
+        ])
+
     def product_detail_keyboard(self, product) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup([
             [InlineKeyboardButton("🛒 В корзину", callback_data=f"prodadd:{product['id']}")],
             [
-                InlineKeyboardButton("⬅️ К товарам", callback_data=f"cat:{product['category_id']}"),
+                InlineKeyboardButton("⬅️ Назад", callback_data=f"prodview:{product['id']}"),
                 InlineKeyboardButton("🛒 Корзина", callback_data="cart:open"),
             ],
         ])
+
+    async def show_product_message(self, query, context, product, text: str, keyboard: InlineKeyboardMarkup):
+        if product["photo_file_id"]:
+            async def send_photo():
+                await context.bot.send_photo(
+                    chat_id=query.message.chat.id,
+                    photo=product["photo_file_id"],
+                    caption=text,
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                )
+
+            if getattr(query.message, "photo", None):
+                try:
+                    await query.edit_message_media(
+                        media=InputMediaPhoto(
+                            media=product["photo_file_id"],
+                            caption=text,
+                            parse_mode="HTML",
+                        ),
+                    )
+                    await query.edit_message_reply_markup(reply_markup=keyboard)
+                except BadRequest as exc:
+                    error_text = str(exc).lower()
+                    if "message is not modified" in error_text:
+                        await query.edit_message_reply_markup(reply_markup=keyboard)
+                        return
+                    if "message can't be edited" in error_text:
+                        await send_photo()
+                    else:
+                        raise
+            else:
+                await send_photo()
+            return
+
+        await self.edit_or_send_message(
+            query,
+            text,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
 
     def build_product_preview(self, draft: dict, product=None) -> dict:
         if product:
@@ -644,46 +708,28 @@ class TelegramShopBot:
             if not product:
                 await self.edit_or_send_message(query, "Товар не найден.")
                 return
-            text = self.format_product_full(product)
-            keyboard = self.product_detail_keyboard(product)
-            if product["photo_file_id"]:
-                async def send_photo():
-                    await context.bot.send_photo(
-                        chat_id=query.message.chat.id,
-                        photo=product["photo_file_id"],
-                        caption=text,
-                        parse_mode="HTML",
-                        reply_markup=keyboard,
-                    )
+            await self.show_product_message(
+                query,
+                context,
+                product,
+                self.format_product_compact(product),
+                self.product_compact_keyboard(product),
+            )
+            return
 
-                if getattr(query.message, "photo", None):
-                    try:
-                        await query.edit_message_media(
-                            media=InputMediaPhoto(
-                                media=product["photo_file_id"],
-                                caption=text,
-                                parse_mode="HTML",
-                            ),
-                        )
-                        await query.edit_message_reply_markup(reply_markup=keyboard)
-                    except BadRequest as exc:
-                        error_text = str(exc).lower()
-                        if "message is not modified" in error_text:
-                            await query.edit_message_reply_markup(reply_markup=keyboard)
-                            return
-                        if "message can't be edited" in error_text:
-                            await send_photo()
-                        else:
-                            raise
-                else:
-                    await send_photo()
-            else:
-                await self.edit_or_send_message(
-                    query,
-                    text,
-                    parse_mode="HTML",
-                    reply_markup=keyboard,
-                )
+        if query.data.startswith("prodfull:"):
+            product_id = int(query.data.split(":")[1])
+            product = self.catalog.get_product(product_id)
+            if not product:
+                await self.edit_or_send_message(query, "Товар не найден.")
+                return
+            await self.show_product_message(
+                query,
+                context,
+                product,
+                self.format_product_full(product),
+                self.product_detail_keyboard(product),
+            )
             return
 
         if query.data.startswith("prodadd:"):
