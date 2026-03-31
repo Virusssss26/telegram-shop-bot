@@ -112,6 +112,14 @@ class TelegramShopBot:
             [InlineKeyboardButton("⬅️ Назад к товарам", callback_data="admprod:list")],
         ])
 
+    def product_preview_keyboard(self, save_callback: str, cancel_callback: str) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ Сохранить", callback_data=save_callback),
+                InlineKeyboardButton("↩️ Отмена", callback_data=cancel_callback),
+            ]
+        ])
+
     def admin_category_manage_keyboard(self, category_id: int) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup([
             [InlineKeyboardButton("✏️ Переименовать", callback_data=f"admcat:rename:{category_id}")],
@@ -162,6 +170,51 @@ class TelegramShopBot:
             f"Цена: {product['price']:.2f}\n\n"
             f"{product['description']}"
         )
+
+    def build_product_preview(self, draft: dict, product=None) -> dict:
+        if product:
+            category_name = product["category_name"]
+            name = draft.get("name", product["name"])
+            description = draft.get("description", product["description"])
+            price = float(draft.get("price", product["price"]))
+            photo_file_id = draft.get("photo_file_id", product["photo_file_id"])
+        else:
+            category = self.catalog.get_category(int(draft["category_id"]))
+            category_name = category["name"] if category else "Не указана"
+            name = draft["name"]
+            description = draft["description"]
+            price = float(draft["price"])
+            photo_file_id = draft["photo_file_id"]
+
+        return {
+            "name": name,
+            "description": description,
+            "price": price,
+            "photo_file_id": photo_file_id,
+            "category_name": category_name,
+        }
+
+    async def send_product_preview(
+        self,
+        message,
+        product: dict,
+        text: str,
+        reply_markup: InlineKeyboardMarkup,
+    ):
+        preview_text = f"{text}\n\n{self.format_product_full(product)}"
+        if product["photo_file_id"]:
+            await message.reply_photo(
+                photo=product["photo_file_id"],
+                caption=preview_text,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
+        else:
+            await message.reply_text(
+                preview_text,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
 
     def format_cart_text(self, user_id: int) -> str:
         items = self.catalog.get_cart(user_id)
@@ -320,13 +373,13 @@ class TelegramShopBot:
             if state == "admin_add_product_name":
                 draft["name"] = text
                 self.set_state(context, "admin_add_product_desc", **draft)
-                await update.message.reply_text("Введите описание товара:", reply_markup=self.cancel_keyboard())
+                await update.message.reply_text("Шаг 2/4. Введите описание товара:", reply_markup=self.cancel_keyboard())
                 return
 
             if state == "admin_add_product_desc":
                 draft["description"] = text
                 self.set_state(context, "admin_add_product_price", **draft)
-                await update.message.reply_text("Введите цену. Например: 1990 или 1990.50", reply_markup=self.cancel_keyboard())
+                await update.message.reply_text("Шаг 3/4. Введите цену. Например: 1990 или 1990.50", reply_markup=self.cancel_keyboard())
                 return
 
             if state == "admin_add_product_price":
@@ -337,19 +390,39 @@ class TelegramShopBot:
                     return
                 draft["price"] = price
                 self.set_state(context, "admin_add_product_photo", **draft)
-                await update.message.reply_text("Отправьте фото товара одним сообщением.", reply_markup=self.cancel_keyboard())
+                await update.message.reply_text("Шаг 4/4. Отправьте фото товара одним сообщением.", reply_markup=self.cancel_keyboard())
                 return
 
             if state == "admin_edit_product_name":
-                self.catalog.update_product_name(draft["product_id"], text)
-                self.clear_state(context)
-                await update.message.reply_text("✅ Название обновлено.", reply_markup=self.main_keyboard(user_id))
+                draft["name"] = text
+                draft["edit_field"] = "name"
+                product = self.catalog.get_product(int(draft["product_id"]))
+                self.set_state(context, "admin_edit_product_confirm", **draft)
+                await self.send_product_preview(
+                    update.message,
+                    self.build_product_preview(draft, product=product),
+                    "Предпросмотр изменений товара:",
+                    self.product_preview_keyboard(
+                        "admprod:saveedit",
+                        f"admprod:canceledit:{draft['product_id']}",
+                    ),
+                )
                 return
 
             if state == "admin_edit_product_desc":
-                self.catalog.update_product_description(draft["product_id"], text)
-                self.clear_state(context)
-                await update.message.reply_text("✅ Описание обновлено.", reply_markup=self.main_keyboard(user_id))
+                draft["description"] = text
+                draft["edit_field"] = "description"
+                product = self.catalog.get_product(int(draft["product_id"]))
+                self.set_state(context, "admin_edit_product_confirm", **draft)
+                await self.send_product_preview(
+                    update.message,
+                    self.build_product_preview(draft, product=product),
+                    "Предпросмотр изменений товара:",
+                    self.product_preview_keyboard(
+                        "admprod:saveedit",
+                        f"admprod:canceledit:{draft['product_id']}",
+                    ),
+                )
                 return
 
             if state == "admin_edit_product_price":
@@ -358,9 +431,19 @@ class TelegramShopBot:
                 except ValueError:
                     await update.message.reply_text("Не удалось распознать цену. Введите число.")
                     return
-                self.catalog.update_product_price(draft["product_id"], price)
-                self.clear_state(context)
-                await update.message.reply_text("✅ Цена обновлена.", reply_markup=self.main_keyboard(user_id))
+                draft["price"] = price
+                draft["edit_field"] = "price"
+                product = self.catalog.get_product(int(draft["product_id"]))
+                self.set_state(context, "admin_edit_product_confirm", **draft)
+                await self.send_product_preview(
+                    update.message,
+                    self.build_product_preview(draft, product=product),
+                    "Предпросмотр изменений товара:",
+                    self.product_preview_keyboard(
+                        "admprod:saveedit",
+                        f"admprod:canceledit:{draft['product_id']}",
+                    ),
+                )
                 return
 
             if state == "admin_set_contacts":
@@ -433,21 +516,30 @@ class TelegramShopBot:
         photo_file_id = update.message.photo[-1].file_id
 
         if state == "admin_add_product_photo":
-            self.catalog.add_product(
-                category_id=int(draft["category_id"]),
-                name=draft["name"],
-                description=draft["description"],
-                price=float(draft["price"]),
-                photo_file_id=photo_file_id,
+            draft["photo_file_id"] = photo_file_id
+            self.set_state(context, "admin_add_product_confirm", **draft)
+            await self.send_product_preview(
+                update.message,
+                self.build_product_preview(draft),
+                "Предпросмотр нового товара:",
+                self.product_preview_keyboard("admprod:saveadd", "admprod:canceladd"),
             )
-            self.clear_state(context)
-            await update.message.reply_text("✅ Товар добавлен.", reply_markup=self.main_keyboard(user_id))
             return
 
         if state == "admin_edit_product_photo":
-            self.catalog.update_product_photo(int(draft["product_id"]), photo_file_id)
-            self.clear_state(context)
-            await update.message.reply_text("✅ Фото обновлено.", reply_markup=self.main_keyboard(user_id))
+            draft["photo_file_id"] = photo_file_id
+            draft["edit_field"] = "photo"
+            product = self.catalog.get_product(int(draft["product_id"]))
+            self.set_state(context, "admin_edit_product_confirm", **draft)
+            await self.send_product_preview(
+                update.message,
+                self.build_product_preview(draft, product=product),
+                "Предпросмотр изменений товара:",
+                self.product_preview_keyboard(
+                    "admprod:saveedit",
+                    f"admprod:canceledit:{draft['product_id']}",
+                ),
+            )
             return
 
         await update.message.reply_text("Сейчас фото не ожидается. Выберите действие в меню.")
@@ -630,7 +722,7 @@ class TelegramShopBot:
         if query.data.startswith("admprod:addcat:"):
             category_id = int(query.data.split(":")[2])
             self.set_state(context, "admin_add_product_name", category_id=category_id)
-            await query.message.reply_text("Введите название товара:", reply_markup=self.cancel_keyboard())
+            await query.message.reply_text("Шаг 1/4. Введите название товара:", reply_markup=self.cancel_keyboard())
             return
 
         if query.data.startswith("admprod:view:"):
@@ -645,26 +737,96 @@ class TelegramShopBot:
 
         if query.data.startswith("admprod:editname:"):
             product_id = int(query.data.split(":")[2])
+            product = self.catalog.get_product(product_id)
             self.set_state(context, "admin_edit_product_name", product_id=product_id)
-            await query.message.reply_text("Введите новое название:", reply_markup=self.cancel_keyboard())
+            await query.message.reply_text(
+                f"Текущее название: {product['name']}\n\nВведите новое название:",
+                reply_markup=self.cancel_keyboard(),
+            )
             return
 
         if query.data.startswith("admprod:editdesc:"):
             product_id = int(query.data.split(":")[2])
+            product = self.catalog.get_product(product_id)
             self.set_state(context, "admin_edit_product_desc", product_id=product_id)
-            await query.message.reply_text("Введите новое описание:", reply_markup=self.cancel_keyboard())
+            await query.message.reply_text(
+                f"Текущее описание:\n{product['description'] or '—'}\n\nВведите новое описание:",
+                reply_markup=self.cancel_keyboard(),
+            )
             return
 
         if query.data.startswith("admprod:editprice:"):
             product_id = int(query.data.split(":")[2])
+            product = self.catalog.get_product(product_id)
             self.set_state(context, "admin_edit_product_price", product_id=product_id)
-            await query.message.reply_text("Введите новую цену:", reply_markup=self.cancel_keyboard())
+            await query.message.reply_text(
+                f"Текущая цена: {product['price']:.2f}\n\nВведите новую цену:",
+                reply_markup=self.cancel_keyboard(),
+            )
             return
 
         if query.data.startswith("admprod:editphoto:"):
             product_id = int(query.data.split(":")[2])
+            product = self.catalog.get_product(product_id)
             self.set_state(context, "admin_edit_product_photo", product_id=product_id)
-            await query.message.reply_text("Отправьте новое фото товара:", reply_markup=self.cancel_keyboard())
+            await query.message.reply_text(
+                f"Текущее фото: {'загружено' if product['photo_file_id'] else 'не загружено'}\n\nОтправьте новое фото товара:",
+                reply_markup=self.cancel_keyboard(),
+            )
+            return
+
+        if query.data == "admprod:saveadd":
+            draft = context.user_data.get("draft", {})
+            self.catalog.add_product(
+                category_id=int(draft["category_id"]),
+                name=draft["name"],
+                description=draft["description"],
+                price=float(draft["price"]),
+                photo_file_id=draft["photo_file_id"],
+            )
+            self.clear_state(context)
+            await query.message.reply_text("✅ Товар добавлен.")
+            await query.message.reply_text("Управление товарами:", reply_markup=self.admin_products_keyboard())
+            return
+
+        if query.data == "admprod:canceladd":
+            self.clear_state(context)
+            await query.message.reply_text("Действие отменено.")
+            await query.message.reply_text("Управление товарами:", reply_markup=self.admin_products_keyboard())
+            return
+
+        if query.data == "admprod:saveedit":
+            draft = context.user_data.get("draft", {})
+            product_id = int(draft["product_id"])
+            edit_field = draft.get("edit_field")
+            if edit_field == "name":
+                self.catalog.update_product_name(product_id, draft["name"])
+            elif edit_field == "description":
+                self.catalog.update_product_description(product_id, draft["description"])
+            elif edit_field == "price":
+                self.catalog.update_product_price(product_id, float(draft["price"]))
+            elif edit_field == "photo":
+                self.catalog.update_product_photo(product_id, draft["photo_file_id"])
+            self.clear_state(context)
+            product = self.catalog.get_product(product_id)
+            await query.message.reply_text("✅ Товар обновлён.")
+            await query.message.reply_text(
+                self.format_product_full(product),
+                parse_mode="HTML",
+                reply_markup=self.admin_product_manage_keyboard(product_id),
+            )
+            return
+
+        if query.data.startswith("admprod:canceledit:"):
+            product_id = int(query.data.split(":")[2])
+            self.clear_state(context)
+            product = self.catalog.get_product(product_id)
+            await query.message.reply_text("Действие отменено.")
+            await query.message.reply_text(
+                self.format_product_full(product),
+                parse_mode="HTML",
+                reply_markup=self.admin_product_manage_keyboard(product_id),
+            )
             return
 
         if query.data.startswith("admprod:movecat:"):
