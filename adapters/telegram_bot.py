@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import os
 from typing import Optional
 
 from telegram import (
@@ -8,7 +6,6 @@ from telegram import (
     InlineKeyboardMarkup,
     KeyboardButton,
     ReplyKeyboardMarkup,
-    ReplyKeyboardRemove,
     Update,
 )
 from telegram.ext import (
