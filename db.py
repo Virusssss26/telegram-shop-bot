@@ -1,6 +1,9 @@
 import sqlite3
 from contextlib import closing
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable, TypeVar
+
+
+T = TypeVar("T")
 
 
 class Database:
@@ -108,3 +111,14 @@ class Database:
         with closing(self.connect()) as conn:
             conn.executemany(query, seq_of_params)
             conn.commit()
+
+    def transaction(self, action: Callable[[sqlite3.Connection], T]) -> T:
+        with closing(self.connect()) as conn:
+            try:
+                conn.execute("BEGIN")
+                result = action(conn)
+                conn.commit()
+                return result
+            except Exception:
+                conn.rollback()
+                raise

@@ -190,29 +190,54 @@ class CatalogService:
 
     # orders
     def create_order(self, user_id: int, phone: str, address: str, comment: str) -> int:
-        items = self.get_cart(user_id)
-        if not items:
-            raise ValueError("Cart is empty")
-        total = self.cart_total(user_id)
-        order_id = self.db.execute(
-            """
-            INSERT INTO orders (user_id, phone, address, comment, total)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (user_id, phone.strip(), address.strip(), comment.strip(), total),
-        )
-        self.db.executemany(
-            """
-            INSERT INTO order_items (order_id, product_id, product_name, price, quantity)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            [
-                (order_id, int(row["id"]), str(row["name"]), float(row["price"]), int(row["quantity"]))
-                for row in items
-            ],
-        )
-        self.clear_cart(user_id)
-        return order_id
+        def create(conn):
+            items = conn.execute(
+                """
+                SELECT p.id, p.name, p.price, p.photo_file_id, c.quantity
+                FROM carts c
+                JOIN products p ON p.id = c.product_id
+                WHERE c.user_id = ?
+                ORDER BY p.id DESC
+                """,
+                (user_id,),
+            ).fetchall()
+            if not items:
+                raise ValueError("Cart is empty")
+
+            total_row = conn.execute(
+                """
+                SELECT COALESCE(SUM(p.price * c.quantity), 0) AS total
+                FROM carts c
+                JOIN products p ON p.id = c.product_id
+                WHERE c.user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+            total = float(total_row["total"]) if total_row else 0.0
+
+            cur = conn.execute(
+                """
+                INSERT INTO orders (user_id, phone, address, comment, total)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (user_id, phone.strip(), address.strip(), comment.strip(), total),
+            )
+            order_id = cur.lastrowid
+
+            conn.executemany(
+                """
+                INSERT INTO order_items (order_id, product_id, product_name, price, quantity)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                [
+                    (order_id, int(row["id"]), str(row["name"]), float(row["price"]), int(row["quantity"]))
+                    for row in items
+                ],
+            )
+            conn.execute("DELETE FROM carts WHERE user_id = ?", (user_id,))
+            return int(order_id)
+
+        return self.db.transaction(create)
 
     def list_orders(self):
         return self.db.fetchall(
