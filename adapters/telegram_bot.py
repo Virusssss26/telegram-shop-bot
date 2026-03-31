@@ -122,7 +122,10 @@ class TelegramShopBot:
     def order_keyboard(self, order_id: int, archived: bool = False) -> InlineKeyboardMarkup:
         rows = []
         if archived:
-            rows.append([InlineKeyboardButton("⬅️ К архиву заказов", callback_data="orders:archive")])
+            rows.append([
+                InlineKeyboardButton("📬 Активные заказы", callback_data="orders:list"),
+                InlineKeyboardButton("⬅️ К архиву заказов", callback_data="orders:archive"),
+            ])
             return InlineKeyboardMarkup(rows)
 
         rows.extend([
@@ -131,8 +134,18 @@ class TelegramShopBot:
                 InlineKeyboardButton("📦 Завершить", callback_data=f"order:done:{order_id}"),
             ],
             [InlineKeyboardButton("❌ Отменить", callback_data=f"order:cancelled:{order_id}")],
-            [InlineKeyboardButton("⬅️ К заказам", callback_data="orders:list")],
+            [
+                InlineKeyboardButton("🗃 Архив заказов", callback_data="orders:archive"),
+                InlineKeyboardButton("⬅️ К заказам", callback_data="orders:list"),
+            ],
         ])
+        return InlineKeyboardMarkup(rows)
+
+    def orders_section_keyboard(self, archived: bool = False) -> InlineKeyboardMarkup:
+        if archived:
+            rows = [[InlineKeyboardButton("📬 Активные заказы", callback_data="orders:list")]]
+        else:
+            rows = [[InlineKeyboardButton("🗃 Архив заказов", callback_data="orders:archive")]]
         return InlineKeyboardMarkup(rows)
 
     # ---------- formatting ----------
@@ -730,11 +743,11 @@ class TelegramShopBot:
         orders = self.catalog.list_archived_orders() if archived else self.catalog.list_active_orders()
         if not orders:
             empty_text = "Архив заказов пока пуст." if archived else "Активных заказов пока нет."
-            await target.reply_text(empty_text, reply_markup=self.main_keyboard(self.admin_id))
+            await target.reply_text(empty_text, reply_markup=self.orders_section_keyboard(archived=archived))
             return
 
         title = "Архив заказов:" if archived else "Активные заказы:"
-        await target.reply_text(title)
+        await target.reply_text(title, reply_markup=self.orders_section_keyboard(archived=archived))
         for order in orders[:20]:
             items = self.catalog.get_order_items(int(order["id"]))
             await target.reply_text(
