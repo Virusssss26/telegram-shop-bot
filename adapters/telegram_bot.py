@@ -8,6 +8,7 @@ from telegram import (
     ReplyKeyboardMarkup,
     Update,
 )
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -75,6 +76,20 @@ class TelegramShopBot:
         if admin:
             rows.append([InlineKeyboardButton("➕ Добавить категорию", callback_data="admcat:add")])
         rows.append([InlineKeyboardButton("🏠 Главное меню", callback_data="nav:main")])
+        return InlineKeyboardMarkup(rows)
+
+    def products_keyboard(self, category_id: int) -> InlineKeyboardMarkup:
+        rows = []
+        for product in self.catalog.list_products(category_id):
+            rows.append([
+                InlineKeyboardButton(
+                    f"{product['name']} · {product['price']:.2f}",
+                    callback_data=f"prodview:{product['id']}",
+                ),
+                InlineKeyboardButton("🛒", callback_data=f"prodadd:{product['id']}"),
+            ])
+        rows.append([InlineKeyboardButton("⬅️ К разделам", callback_data="catalog:back")])
+        rows.append([InlineKeyboardButton("🛒 Корзина", callback_data="cart:open")])
         return InlineKeyboardMarkup(rows)
 
     def admin_products_keyboard(self) -> InlineKeyboardMarkup:
@@ -171,6 +186,15 @@ class TelegramShopBot:
             f"{product['description']}"
         )
 
+    def product_detail_keyboard(self, product) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("🛒 В корзину", callback_data=f"prodadd:{product['id']}")],
+            [
+                InlineKeyboardButton("⬅️ К товарам", callback_data=f"cat:{product['category_id']}"),
+                InlineKeyboardButton("🛒 Корзина", callback_data="cart:open"),
+            ],
+        ])
+
     def build_product_preview(self, draft: dict, product=None) -> dict:
         if product:
             category_name = product["category_name"]
@@ -227,6 +251,35 @@ class TelegramShopBot:
         lines.append("")
         lines.append(f"Итого: <b>{self.catalog.cart_total(user_id):.2f}</b>")
         return "\n".join(lines)
+
+    async def edit_or_send_message(
+        self,
+        query,
+        text: str,
+        reply_markup=None,
+        parse_mode: Optional[str] = None,
+    ):
+        try:
+            if getattr(query.message, "photo", None):
+                await query.edit_message_caption(
+                    caption=text,
+                    parse_mode=parse_mode,
+                    reply_markup=reply_markup,
+                )
+            else:
+                await query.edit_message_text(
+                    text=text,
+                    parse_mode=parse_mode,
+                    reply_markup=reply_markup,
+                )
+        except BadRequest as exc:
+            if "message is not modified" in str(exc).lower():
+                return
+            await query.message.reply_text(
+                text,
+                parse_mode=parse_mode,
+                reply_markup=reply_markup,
+            )
 
     def format_order_text(self, order, items) -> str:
         lines = [
@@ -561,99 +614,114 @@ class TelegramShopBot:
             category = self.catalog.get_category(category_id)
             products = self.catalog.list_products(category_id)
             if not products:
-                await query.message.reply_text(
+                await self.edit_or_send_message(
+                    query,
                     f"В разделе «{category['name']}» пока нет товаров.",
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("⬅️ К разделам", callback_data="catalog:back")]
-                    ])
+                    ]),
                 )
                 return
-            await query.message.reply_text(f"Раздел: {category['name']}")
-            for product in products:
-                kb = InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton("🛒 В корзину", callback_data=f"prodadd:{product['id']}"),
-                        InlineKeyboardButton("ℹ️ Подробнее", callback_data=f"prodview:{product['id']}")
-                    ],
-                    [InlineKeyboardButton("⬅️ К разделам", callback_data="catalog:back")],
-                ])
-                if product["photo_file_id"]:
-                    await context.bot.send_photo(
-                        chat_id=user_id,
-                        photo=product["photo_file_id"],
-                        caption=self.format_product_card(product),
-                        parse_mode="HTML",
-                        reply_markup=kb,
-                    )
-                else:
-                    await context.bot.send_message(
-                        chat_id=user_id,
-                        text=self.format_product_card(product),
-                        parse_mode="HTML",
-                        reply_markup=kb,
-                    )
+            await self.edit_or_send_message(
+                query,
+                f"Раздел: {category['name']}\n\nВыберите товар:",
+                reply_markup=self.products_keyboard(category_id),
+            )
             return
 
         if query.data == "catalog:back":
-            await query.message.reply_text("Выберите раздел:", reply_markup=self.categories_keyboard(admin=False))
+            await self.edit_or_send_message(
+                query,
+                "Выберите раздел:",
+                reply_markup=self.categories_keyboard(admin=False),
+            )
             return
 
         if query.data.startswith("prodview:"):
             product_id = int(query.data.split(":")[1])
             product = self.catalog.get_product(product_id)
             if not product:
-                await query.message.reply_text("Товар не найден.")
+                await self.edit_or_send_message(query, "Товар не найден.")
                 return
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🛒 В корзину", callback_data=f"prodadd:{product['id']}")],
-                [InlineKeyboardButton("⬅️ Назад к каталогу", callback_data=f"cat:{product['category_id']}")],
-            ])
-            if product["photo_file_id"]:
-                await context.bot.send_photo(
-                    chat_id=user_id,
-                    photo=product["photo_file_id"],
-                    caption=self.format_product_full(product),
-                    parse_mode="HTML",
-                    reply_markup=kb,
-                )
-            else:
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text=self.format_product_full(product),
-                    parse_mode="HTML",
-                    reply_markup=kb,
-                )
+            await self.edit_or_send_message(
+                query,
+                self.format_product_full(product),
+                parse_mode="HTML",
+                reply_markup=self.product_detail_keyboard(product),
+            )
             return
 
         if query.data.startswith("prodadd:"):
             product_id = int(query.data.split(":")[1])
             self.catalog.add_to_cart(user_id, product_id)
-            await query.message.reply_text("✅ Товар добавлен в корзину.")
+            await query.answer("Товар добавлен в корзину.")
+            return
+
+        if query.data == "cart:open":
+            cart = self.catalog.get_cart(user_id)
+            await self.edit_or_send_message(
+                query,
+                self.format_cart_text(user_id),
+                parse_mode="HTML",
+                reply_markup=self.cart_keyboard(user_id) if cart else InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🛍 Каталог", callback_data="catalog:back")],
+                    [InlineKeyboardButton("🏠 Главное меню", callback_data="nav:main")],
+                ]),
+            )
             return
 
         # cart
         if query.data.startswith("cart:inc:"):
             product_id = int(query.data.split(":")[2])
             self.catalog.change_cart_quantity(user_id, product_id, 1)
-            await query.message.reply_text(self.format_cart_text(user_id), parse_mode="HTML", reply_markup=self.cart_keyboard(user_id))
+            await self.edit_or_send_message(
+                query,
+                self.format_cart_text(user_id),
+                parse_mode="HTML",
+                reply_markup=self.cart_keyboard(user_id),
+            )
             return
 
         if query.data.startswith("cart:dec:"):
             product_id = int(query.data.split(":")[2])
             self.catalog.change_cart_quantity(user_id, product_id, -1)
             if self.catalog.get_cart(user_id):
-                await query.message.reply_text(self.format_cart_text(user_id), parse_mode="HTML", reply_markup=self.cart_keyboard(user_id))
+                await self.edit_or_send_message(
+                    query,
+                    self.format_cart_text(user_id),
+                    parse_mode="HTML",
+                    reply_markup=self.cart_keyboard(user_id),
+                )
             else:
-                await query.message.reply_text("🛒 Корзина пуста.", reply_markup=self.main_keyboard(user_id))
+                await self.edit_or_send_message(
+                    query,
+                    "🛒 Корзина пуста.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🛍 Каталог", callback_data="catalog:back")],
+                        [InlineKeyboardButton("🏠 Главное меню", callback_data="nav:main")],
+                    ]),
+                )
             return
 
         if query.data.startswith("cart:rm:"):
             product_id = int(query.data.split(":")[2])
             self.catalog.remove_from_cart(user_id, product_id)
             if self.catalog.get_cart(user_id):
-                await query.message.reply_text(self.format_cart_text(user_id), parse_mode="HTML", reply_markup=self.cart_keyboard(user_id))
+                await self.edit_or_send_message(
+                    query,
+                    self.format_cart_text(user_id),
+                    parse_mode="HTML",
+                    reply_markup=self.cart_keyboard(user_id),
+                )
             else:
-                await query.message.reply_text("🛒 Корзина пуста.", reply_markup=self.main_keyboard(user_id))
+                await self.edit_or_send_message(
+                    query,
+                    "🛒 Корзина пуста.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🛍 Каталог", callback_data="catalog:back")],
+                        [InlineKeyboardButton("🏠 Главное меню", callback_data="nav:main")],
+                    ]),
+                )
             return
 
         if query.data == "checkout:start":
