@@ -4,6 +4,7 @@ from typing import Optional
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    InputMediaPhoto,
     KeyboardButton,
     ReplyKeyboardMarkup,
     Update,
@@ -643,12 +644,46 @@ class TelegramShopBot:
             if not product:
                 await self.edit_or_send_message(query, "Товар не найден.")
                 return
-            await self.edit_or_send_message(
-                query,
-                self.format_product_full(product),
-                parse_mode="HTML",
-                reply_markup=self.product_detail_keyboard(product),
-            )
+            text = self.format_product_full(product)
+            keyboard = self.product_detail_keyboard(product)
+            if product["photo_file_id"]:
+                async def send_photo():
+                    await context.bot.send_photo(
+                        chat_id=query.message.chat.id,
+                        photo=product["photo_file_id"],
+                        caption=text,
+                        parse_mode="HTML",
+                        reply_markup=keyboard,
+                    )
+
+                if getattr(query.message, "photo", None):
+                    try:
+                        await query.edit_message_media(
+                            media=InputMediaPhoto(
+                                media=product["photo_file_id"],
+                                caption=text,
+                                parse_mode="HTML",
+                            ),
+                        )
+                        await query.edit_message_reply_markup(reply_markup=keyboard)
+                    except BadRequest as exc:
+                        error_text = str(exc).lower()
+                        if "message is not modified" in error_text:
+                            await query.edit_message_reply_markup(reply_markup=keyboard)
+                            return
+                        if "message can't be edited" in error_text:
+                            await send_photo()
+                        else:
+                            raise
+                else:
+                    await send_photo()
+            else:
+                await self.edit_or_send_message(
+                    query,
+                    text,
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                )
             return
 
         if query.data.startswith("prodadd:"):
