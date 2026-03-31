@@ -186,6 +186,26 @@ class TelegramShopBot:
         context.user_data.pop("state", None)
         context.user_data.pop("draft", None)
 
+    def is_valid_phone(self, phone: str) -> bool:
+        normalized = phone.strip()
+        allowed_chars = set("0123456789+()- ")
+        if not normalized or any(char not in allowed_chars for char in normalized):
+            return False
+
+        digits = "".join(char for char in normalized if char.isdigit())
+        plus_count = normalized.count("+")
+        if plus_count > 1:
+            return False
+        if plus_count == 1 and not normalized.startswith("+"):
+            return False
+        return 10 <= len(digits) <= 15
+
+    def is_valid_name(self, name: str) -> bool:
+        return bool(name.strip())
+
+    def is_valid_address(self, address: str) -> bool:
+        return bool(address.strip())
+
     # ---------- handlers ----------
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = "👋 Добро пожаловать. Используйте кнопки ниже." if not self.is_admin(update.effective_user.id) else "👋 Админ-панель готова."
@@ -204,6 +224,12 @@ class TelegramShopBot:
         
         # stateful flows first
         if state == "checkout_phone":
+            if not self.is_valid_phone(text):
+                await update.message.reply_text(
+                    "Введите корректный номер телефона.",
+                    reply_markup=self.cancel_keyboard(),
+                )
+                return
             draft["phone"] = text
             context.user_data["draft"] = draft
             self.set_state(context, "checkout_name", **draft)
@@ -211,6 +237,12 @@ class TelegramShopBot:
             return
 
         if state == "checkout_name":
+            if not self.is_valid_name(text):
+                await update.message.reply_text(
+                    "Имя не должно быть пустым.",
+                    reply_markup=self.cancel_keyboard(),
+                )
+                return
             draft["name"] = text
             context.user_data["draft"] = draft
             self.set_state(context, "checkout_address", **draft)
@@ -218,6 +250,12 @@ class TelegramShopBot:
             return
 
         if state == "checkout_address":
+            if not self.is_valid_address(text):
+                await update.message.reply_text(
+                    "Адрес не должен быть пустым.",
+                    reply_markup=self.cancel_keyboard(),
+                )
+                return
             draft["address"] = text
             context.user_data["draft"] = draft
             self.set_state(context, "checkout_comment", **draft)
@@ -657,6 +695,13 @@ class TelegramShopBot:
             return
 
         draft = context.user_data.get("draft", {})
+        if not self.is_valid_phone(contact.phone_number):
+            await update.message.reply_text(
+                "Введите корректный номер телефона.",
+                reply_markup=self.cancel_keyboard()
+            )
+            return
+
         draft["phone"] = contact.phone_number
 
         self.set_state(context, "checkout_name", **draft)
